@@ -74,16 +74,26 @@ pub fn create_credentials() -> Result<RespotCredentials, String> {
             //    else https://open.spotify.com/desktop/auth/error
             //    After 15min give up
             log::info!("Creating user auth url");
-            let client_id = ClientId::new("65b708073fc0480ea92a077233ca87bd".to_owned());
+            // spotify desktop client id
+            let desktop_client_id = ClientId::new("65b708073fc0480ea92a077233ca87bd".to_owned());
+            // ncspot_medwards client id and secret
+            let client_id = ClientId::new( std::env::var("SPOTIFY_APP_CLIENT_ID").expect("Couldn't find SPOTIFY_APP_CLIENT_ID - get one at https://developer.spotify.com/dashboard/"));
+            let client_secret = ClientSecret::new( std::env::var("SPOTIFY_APP_CLIENT_SECRET").expect("Couldn't find SPOTIFY_APP_CLIENT_SECRET - get one at https://developer.spotify.com/dashboard/"));
+
+            //let client_id = desktop_client_id;
             let redirect_uri = RedirectUrl::new("http://127.0.0.1:4381/login".to_owned()).unwrap();
 
             let client = BasicClient::new(
-                client_id.clone(), // shouldn't use desktop client id - can I use https://developer.spotify.com/documentation/general/guides/app-settings/ ?
-                None, // and if so, do I put the secret here? website says "never reveal it publicly!"
+                // spotify desktop client
+                //desktop_client_id.clone(),
+                //None,
+                // ncspot_medwards client secret
+                client_id.clone(),
+                Some(client_secret),
                 AuthUrl::new("https://accounts.spotify.com/authorize".to_owned()).unwrap(),
                 Some(TokenUrl::new("https://accounts.spotify.com/api/token".to_owned()).unwrap()),
             )
-            .set_redirect_uri(redirect_uri);
+            .set_redirect_uri(redirect_uri.clone());
 
             let (code_challenge, code_verifier) = PkceCodeChallenge::new_random_sha256();
 
@@ -91,7 +101,7 @@ pub fn create_credentials() -> Result<RespotCredentials, String> {
                 .authorize_url(CsrfToken::new_random)
                 .set_pkce_challenge(code_challenge);
 
-            let builder_with_scopes = vec![
+            let scopes: Vec<_> = vec![
                 "app-remote-control",
                 "playlist-modify",
                 "playlist-modify-private",
@@ -100,21 +110,21 @@ pub fn create_credentials() -> Result<RespotCredentials, String> {
                 "playlist-read-collaborative",
                 "playlist-read-private",
                 "streaming",
-                "ugc-image-upload",
+                //"ugc-image-upload",
                 "user-follow-modify",
                 "user-follow-read",
                 "user-library-modify",
                 "user-library-read",
                 "user-modify",
-                "user-modify-playback-state",
-                "user-modify-private",
-                "user-personalized",
-                "user-read-birthdate",
-                "user-read-currently-playing",
-                "user-read-email",
-                "user-read-play-history",
-                "user-read-playback-position",
-                "user-read-playback-state",
+                //"user-modify-playback-state",
+                //"user-modify-private",
+                //"user-personalized",
+                //"user-read-birthdate",
+                //"user-read-currently-playing",
+                //"user-read-email",
+                //"user-read-play-history",
+                //"user-read-playback-position",
+                //"user-read-playback-state",
                 "user-read-private",
                 "user-read-recently-played",
                 "user-top-read",
@@ -122,9 +132,13 @@ pub fn create_credentials() -> Result<RespotCredentials, String> {
             .into_iter()
             .map(str::to_owned)
             .map(Scope::new)
-            .fold(builder, |builder, scope| builder.add_scope(scope));
+            .collect();
 
-            let (auth_url, csrf_token) = builder_with_scopes.url();
+            let builder = scopes
+                .iter()
+                .fold(builder, |builder, scope| builder.add_scope(scope.clone()));
+
+            let (auth_url, csrf_token) = builder.url();
 
             let mut entry_uri = Url::from_str("https://accounts.spotify.com/login").unwrap();
             entry_uri
@@ -148,28 +162,6 @@ pub fn create_credentials() -> Result<RespotCredentials, String> {
 
             s.pop_layer();
             s.add_layer(login_view)
-
-            /*
-            // Poll on server
-            let urls: std::collections::HashMap<String, String> =
-                reqwest::get("https://login2.spotify.com/v1/config")
-                    .expect("didn't connect")
-                    .json()
-                    .expect("didn't parse");
-            // not a dialog to let people copy & paste the URL
-            let url_notice = TextView::new(format!("Browse to {}", &urls["login_url"]));
-
-            let controls = Button::new("Quit", Cursive::quit);
-
-            let login_view = LinearLayout::new(cursive::direction::Orientation::Vertical)
-                .child(url_notice)
-                .child(controls);
-            let url = &urls["login_url"];
-            webbrowser::open(url).ok();
-            auth_poller(&urls["credentials_url"], &s.cb_sink());
-            s.pop_layer();
-            s.add_layer(login_view)
-            */
         })
         .button("Quit", Cursive::quit);
 
@@ -271,10 +263,21 @@ fn auth_listener(
 
         let credentials: Result<_, String> = Ok(RespotCredentials {
             username: "medwards@walledcity.ca".to_owned(),
-            auth_type: AuthenticationType::AUTHENTICATION_STORED_FACEBOOK_CREDENTIALS,
+            auth_type: AuthenticationType::AUTHENTICATION_SPOTIFY_TOKEN,
             auth_data: token_result.access_token().secret().clone().into_bytes(),
         });
         log::info!("Making RespotCredentials: {:?}", &credentials);
+
+        let _ = request.respond(tiny_http::Response::new(
+            tiny_http::StatusCode(302),
+            vec![tiny_http::Header::from_str(
+                "Location: https://open.spotify.com/desktop/auth/success",
+            )
+            .unwrap()],
+            std::io::empty(),
+            None,
+            None,
+        ));
 
         app_sink
             .send(Box::new(|s: &mut Cursive| {
